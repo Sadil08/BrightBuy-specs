@@ -1,0 +1,1039 @@
+openapi: 3.0.3
+info:
+  title: BrightBuy API
+  version: "1.0.0-draft"
+  description: >
+    BrightBuy Retail Inventory and Online Order Management System — Phase 1 API contract.
+    This is the "spec-first" contract: written before the Go handler that implements each path.
+    Hand-authored and authoritative during the spec phase; each feature's plan.md §3 links back here.
+    See /specs/README.md for the spec system this file is part of, and /specs/global/01_TECH_STACK.md
+    §3 for the API conventions (versioned paths, DTO-only, money-as-string, one error shape,
+    pagination, idempotency key) this file follows.
+    STATUS: living document — paths are added feature-by-feature as each plan.md is drafted; a path
+    listed here with no matching feature yet is a preview, not a commitment.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: catalog
+  - name: auth
+  - name: cart
+  - name: checkout
+  - name: orders
+  - name: delivery
+  - name: inventory
+  - name: admin-catalog
+  - name: admin-rbac
+  - name: reports
+
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: brightbuy_session
+      description: >
+        httpOnly, Secure, SameSite=Strict cookie carrying a signed JWT. See
+        /specs/global/02_SECURITY_BASELINE.md §2. Public endpoints override this with `security: []`.
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    SizeParam:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 64 }
+      description: REQ-4.9 — replaying the same key returns the original order, never a second one.
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: STOCK_EXCEEDED }
+        message: { type: string }
+        fields:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    Money:
+      type: string
+      description: Decimal amount as a string (never a JSON number) — see 01_TECH_STACK.md §3.
+      example: "129.99"
+
+    Page:
+      type: object
+      properties:
+        page: { type: integer }
+        size: { type: integer }
+        total: { type: integer }
+
+    Category:
+      type: object
+      properties:
+        categoryId: { type: integer }
+        name: { type: string }
+        description: { type: string }
+
+    VariantAttribute:
+      type: object
+      properties:
+        name: { type: string, example: Color }
+        value: { type: string, example: Black }
+
+    ProductVariant:
+      type: object
+      properties:
+        variantId: { type: integer }
+        sku: { type: string }
+        price: { $ref: '#/components/schemas/Money' }
+        stockStatus: { type: string, enum: [IN_STOCK, OUT_OF_STOCK] }
+        attributes:
+          type: array
+          items: { $ref: '#/components/schemas/VariantAttribute' }
+
+    ProductImage:
+      type: object
+      properties:
+        imageId: { type: integer }
+        url: { type: string, format: uri, description: public URL derived from the S3/MinIO object key }
+        sortOrder: { type: integer }
+        isPrimary: { type: boolean }
+
+    Product:
+      type: object
+      properties:
+        productId: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/ProductVariant' }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/ProductImage' }
+
+    Permission:
+      type: object
+      properties:
+        permissionId: { type: integer }
+        code: { type: string, example: "catalog:write" }
+        description: { type: string }
+
+    Role:
+      type: object
+      properties:
+        roleId: { type: integer }
+        name: { type: string, example: WAREHOUSE_STAFF }
+        permissions:
+          type: array
+          items: { type: string }
+          description: permission codes currently granted to this role
+
+    RolePermissionsUpdateRequest:
+      type: object
+      required: [permissionCodes]
+      properties:
+        permissionCodes:
+          type: array
+          items: { type: string }
+          description: the full replacement set of permission codes for this role (RBAC-1)
+
+    ImageUploadUrlRequest:
+      type: object
+      required: [contentType]
+      properties:
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+
+    ImageUploadUrl:
+      type: object
+      properties:
+        uploadUrl: { type: string, format: uri, description: "presigned S3/MinIO PUT URL, expires in 5 minutes" }
+        objectKey: { type: string, description: pass this back to POST .../images to confirm }
+        expiresAt: { type: string, format: date-time }
+
+    ImageConfirmRequest:
+      type: object
+      required: [objectKey]
+      properties:
+        objectKey: { type: string }
+        isPrimary: { type: boolean, default: false }
+
+    ProductSummary:
+      type: object
+      description: Catalog list-view shape — lighter than Product (no full variant attribute list).
+      properties:
+        productId: { type: integer }
+        name: { type: string }
+        priceFrom: { $ref: '#/components/schemas/Money' }
+        stockStatus: { type: string, enum: [IN_STOCK, OUT_OF_STOCK] }
+
+    RegisterRequest:
+      type: object
+      required: [name, email, password, phone]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        phone: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    UserProfile:
+      type: object
+      description: Generic account profile — every role shares this shape (02-auth/plan.md §2).
+      properties:
+        userId: { type: integer, description: user_account_id }
+        customerId: { type: integer, nullable: true, description: set only when role = CUSTOMER }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [CUSTOMER, WAREHOUSE_STAFF, ORDER_MANAGER, MANAGER, ADMIN] }
+
+    CreateAccountRequest:
+      type: object
+      required: [name, email, password, roleId]
+      description: Admin-only staff/manager/admin account creation (account:manage_users, 02-auth FR-AUTH-8).
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        roleId: { type: integer }
+
+    CartItemInput:
+      type: object
+      required: [variantId, quantity]
+      properties:
+        variantId: { type: integer }
+        quantity: { type: integer, minimum: 1 }
+
+    CartItem:
+      type: object
+      properties:
+        cartItemId: { type: integer }
+        variantId: { type: integer }
+        productName: { type: string }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        quantity: { type: integer }
+        lineTotal: { $ref: '#/components/schemas/Money' }
+        stockWarning:
+          type: boolean
+          description: REQ-3.4 — advisory only; authoritative check happens at checkout.
+
+    Cart:
+      type: object
+      properties:
+        cartId: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+        subtotal: { $ref: '#/components/schemas/Money' }
+
+    DeliveryEstimateRequest:
+      type: object
+      required: [mode, items]
+      properties:
+        mode: { type: string, enum: [StorePickup, StandardDelivery] }
+        cityId: { type: integer, description: "required when mode = StandardDelivery; ignored for StorePickup (REQ-6.6, SQL-BUG-1)" }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItemInput' }
+
+    DeliveryEstimate:
+      type: object
+      properties:
+        mode: { type: string, enum: [StorePickup, StandardDelivery] }
+        estimatedDate: { type: string, format: date }
+        estimatedDays: { type: integer }
+
+    CheckoutRequest:
+      type: object
+      required: [deliveryMode, paymentMethod]
+      properties:
+        deliveryMode: { type: string, enum: [StorePickup, StandardDelivery] }
+        deliveryCityId: { type: integer, description: required when deliveryMode = StandardDelivery }
+        deliveryAddress: { type: string, description: required when deliveryMode = StandardDelivery }
+        paymentMethod: { type: string, enum: [COD, Card] }
+        card:
+          type: object
+          description: Passed through to the payment port only; never persisted (REQ-7.5/7.6).
+          properties:
+            token: { type: string, description: "tokenized by the client-side payment stub, never a raw PAN" }
+
+    OrderItem:
+      type: object
+      properties:
+        variantId: { type: integer }
+        productName: { type: string }
+        quantity: { type: integer }
+        unitPriceAtOrder: { $ref: '#/components/schemas/Money' }
+
+    OrderStatus:
+      type: string
+      enum: [Placed, Confirmed, Processing, Shipped, ReadyForPickup, Delivered, Completed, Cancelled]
+
+    Order:
+      type: object
+      properties:
+        orderId: { type: integer }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        subtotal: { $ref: '#/components/schemas/Money' }
+        taxAmount: { $ref: '#/components/schemas/Money' }
+        deliveryFee: { $ref: '#/components/schemas/Money' }
+        totalAmount: { $ref: '#/components/schemas/Money' }
+        delivery: { $ref: '#/components/schemas/DeliveryEstimate' }
+        paymentStatus: { type: string, enum: [Pending, Authorized, Paid, Failed, Refunded] }
+        createdAt: { type: string, format: date-time }
+
+    OrderStatusUpdateRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/OrderStatus' }
+
+    StockAdjustmentRequest:
+      type: object
+      required: [delta, reason]
+      properties:
+        delta: { type: integer, description: "positive to restock, negative to correct downward" }
+        reason: { type: string }
+
+    VariantCreateRequest:
+      type: object
+      required: [sku, price, openingStock]
+      properties:
+        sku: { type: string }
+        price: { $ref: '#/components/schemas/Money' }
+        openingStock: { type: integer }
+        attributes:
+          type: array
+          items: { $ref: '#/components/schemas/VariantAttribute' }
+
+    ProductCreateRequest:
+      type: object
+      required: [name, categoryIds, variants]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        categoryIds:
+          type: array
+          items: { type: integer }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/VariantCreateRequest' }
+
+    VariantUpdateRequest:
+      type: object
+      properties:
+        price: { $ref: '#/components/schemas/Money' }
+
+    CategoryCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: REQ-2.1, 2.2, 2.3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } } }
+        '400': { description: validation failure, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: email already registered, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: REQ-2.4; REQ-2.8 generic failure message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: sets the session cookie, content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } } }
+        '401': { description: "invalid credentials (generic message, no enumeration)", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: >
+        Reads the httpOnly refresh cookie, verifies it against refresh_token (not revoked, not
+        expired), re-resolves the account's current permissions (02_SECURITY_BASELINE.md §1.1) and
+        issues a new access token + rotated refresh token as cookies. No request body.
+      responses:
+        '200': { description: cookies refreshed, content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } } }
+        '401': { description: "refresh token missing, expired, or revoked — caller must log in again", content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: REQ-2.5 — revokes the refresh token server-side (marks refresh_token.revoked_at)
+      responses:
+        '204': { description: logged out }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Current session's profile
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } } }
+        '401': { description: not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /categories:
+    get:
+      tags: [catalog]
+      security: []
+      summary: REQ-1.4
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Category' }
+
+  /products:
+    get:
+      tags: [catalog]
+      security: []
+      summary: REQ-1.1, 1.2, 1.3, 1.4, 1.6 — browse/search/filter, paginated
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - name: q
+          in: query
+          schema: { type: string }
+          description: keyword search across product name and description (REQ-1.3)
+        - name: categoryId
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProductSummary' }
+                  page: { $ref: '#/components/schemas/Page' }
+
+  /products/{productId}:
+    get:
+      tags: [catalog]
+      security: []
+      summary: REQ-1.2, 1.5, 1.7 — full detail with variants; exact stock qty hidden from customers
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '404': { description: not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /cart:
+    get:
+      tags: [cart]
+      summary: REQ-3.3, 3.5 — server-side cart for a logged-in customer
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '401': { description: not authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /cart/items:
+    post:
+      tags: [cart]
+      summary: REQ-3.1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CartItemInput' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { description: validation failure, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /cart/merge:
+    post:
+      tags: [cart]
+      summary: >
+        REQ-3.5 — merges a guest's localStorage cart into the customer's server-side cart on login.
+        Where the same variant appears in both, the higher quantity is kept (not summed).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/CartItemInput' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+
+  /cart/items/{cartItemId}:
+    patch:
+      tags: [cart]
+      summary: REQ-3.2 — update quantity
+      parameters:
+        - name: cartItemId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '404': { description: not this customer's line item, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [cart]
+      summary: REQ-3.2 — remove line
+      parameters:
+        - name: cartItemId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '404': { description: not this customer's line item, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /delivery/estimate:
+    post:
+      tags: [delivery]
+      security: []
+      summary: >
+        REQ-6.1–6.6 — preview estimate before confirming checkout, public (a guest previews before
+        registering). Calls the same fn_estimate_delivery_days the checkout stored procedure uses
+        (05-delivery-estimation/plan.md §1) so preview and final can never diverge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryEstimateRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryEstimate' } } } }
+
+  /checkout:
+    post:
+      tags: [checkout]
+      summary: >
+        REQ-4.1–4.11, 7.1–7.7 — the atomic place-order use case. Backed by sp_place_order
+        (07_SQL_DATABASE_STANDARDS.md §3.1). Card auth happens before the DB transaction opens (REQ-4.8).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutRequest' }
+      responses:
+        '201': { description: order confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { description: validation failure, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: not authenticated — only registered customers may check out, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409':
+          description: one or more lines failed the final stock check (REQ-4.3) or card auth failed
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /orders:
+    get:
+      tags: [orders]
+      summary: REQ-8.4 — the caller's own order history only
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Order' }
+                  page: { $ref: '#/components/schemas/Page' }
+
+  /orders/{orderId}:
+    get:
+      tags: [orders]
+      summary: REQ-8.4 — 404 (not 403) if the order isn't the caller's, whether or not the id is valid
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '404': { description: not found or not owned by the caller, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/orders/{orderId}/status:
+    patch:
+      tags: [orders]
+      summary: >
+        REQ-8.3, 8.5, 8.6 — requires permission `order:status:update` (default: ORDER_MANAGER, RBAC-1);
+        backed by trg_order_status_transition + trg_order_status_history
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderStatusUpdateRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '403': { description: caller lacks order:status:update, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: invalid transition, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products:
+    post:
+      tags: [admin-catalog]
+      summary: "REQ-10.1, 10.2, 10.3, 10.4 — requires permission `catalog:write` (default: WAREHOUSE_STAFF, RBAC-1)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductCreateRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: SKU already in use, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products/{productId}:
+    patch:
+      tags: [admin-catalog]
+      summary: REQ-10.1, 10.6 — update; price changes apply to future orders only
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+    delete:
+      tags: [admin-catalog]
+      summary: REQ-10.5 — deactivate, never a hard delete
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: deactivated }
+
+  /staff/products/{productId}/variants:
+    post:
+      tags: [admin-catalog]
+      summary: REQ-10.1, 10.3, 10.4 — add a variant to an existing product. Requires permission `catalog:write`.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantCreateRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/ProductVariant' } } } }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: SKU already in use, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products/{productId}/variants/{variantId}:
+    patch:
+      tags: [admin-catalog]
+      summary: REQ-10.1, 10.6 — update a variant's price; a price change applies to future orders only. Requires permission `catalog:write`.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: variantId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantUpdateRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ProductVariant' } } } }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [admin-catalog]
+      summary: >
+        REQ-10.5 — deactivates the variant (never a hard delete: order_item rows may reference it).
+        Requires permission `catalog:write`.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: variantId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: deactivated }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/categories:
+    post:
+      tags: [admin-catalog]
+      summary: REQ-10.1 — create a category. Requires permission `catalog:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryCreateRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } } }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/categories/{categoryId}:
+    patch:
+      tags: [admin-catalog]
+      summary: REQ-10.1 — update a category. Requires permission `catalog:write`.
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryCreateRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } } }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    delete:
+      tags: [admin-catalog]
+      summary: >
+        REQ-10.5 — deactivates the category (never a hard delete). Requires permission `catalog:write`.
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: deactivated }
+        '403': { description: caller lacks catalog:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/variants:
+    get:
+      tags: [inventory]
+      summary: >
+        SRS §4.5.2 (stimulus 3) — staff-only lookup by SKU or product name, showing the EXACT stock
+        quantity (unlike the public catalog, which only ever shows IN_STOCK/OUT_OF_STOCK,
+        SEC-CATALOG-1). Requires permission `stock:adjust`.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+          description: matched against SKU (exact/prefix) and product name
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        variantId: { type: integer }
+                        sku: { type: string }
+                        productName: { type: string }
+                        stockQuantity: { type: integer, description: exact count — staff only }
+                  page: { $ref: '#/components/schemas/Page' }
+        '403': { description: caller lacks stock:adjust, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/variants/{variantId}/stock:
+    post:
+      tags: [inventory]
+      summary: >
+        REQ-5.2, 5.5, 5.6 — requires permission `stock:adjust` (default: WAREHOUSE_STAFF, RBAC-1);
+        backed by sp_adjust_stock (07_SQL_DATABASE_STANDARDS.md §3.2)
+      parameters:
+        - name: variantId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StockAdjustmentRequest' }
+      responses:
+        '200': { description: ok }
+        '409': { description: adjustment would take stock below zero (REQ-5.6), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /reports/quarterly-sales:
+    get:
+      tags: [reports]
+      summary: "REQ-9.1 — requires permission `reports:view` (default: MANAGER, RBAC-1); reads vw_quarterly_sales"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: year
+          in: query
+          required: true
+          schema: { type: integer }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        '200': { description: ok }
+        '403': { description: caller lacks reports:view, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /reports/top-selling-products:
+    get:
+      tags: [reports]
+      summary: REQ-9.2 — reads vw_top_selling_products (window-function ranking)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200': { description: ok }
+
+  /reports/category-wise-orders:
+    get:
+      tags: [reports]
+      summary: REQ-9.3 — reads vw_category_wise_orders (CTE de-duplicated); counts do not sum to total orders
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /reports/upcoming-deliveries:
+    get:
+      tags: [reports]
+      summary: REQ-9.4 — reads vw_upcoming_deliveries
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /reports/customer-order-summary:
+    get:
+      tags: [reports]
+      summary: REQ-9.5 — requires permission `reports:view`; reads vw_customer_order_summary
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: customerId
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: ok }
+
+  /staff/products/{productId}/images/upload-url:
+    post:
+      tags: [admin-catalog]
+      summary: >
+        Resolved OQ-3 — requires permission `catalog:image:write`. Step 1 of the upload pipeline:
+        issues a presigned S3/MinIO PUT URL scoped to one server-generated object key. The client
+        uploads the binary directly to that URL (not through this API); see
+        02_SECURITY_BASELINE.md §4 for the size/content-type/magic-byte controls.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImageUploadUrlRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ImageUploadUrl' } } } }
+        '403': { description: caller lacks catalog:image:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products/{productId}/images:
+    post:
+      tags: [admin-catalog]
+      summary: >
+        Step 2 of the upload pipeline: confirms a completed direct-to-S3 upload. Server re-fetches the
+        object, verifies magic bytes against an allowed image type, strips EXIF, then persists the
+        product_image row (07_SQL_DATABASE_STANDARDS.md §1a). Requires permission `catalog:image:write`.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImageConfirmRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/ProductImage' } } } }
+        '400': { description: uploaded object failed the image-type verification, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: caller lacks catalog:image:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products/{productId}/images/{imageId}:
+    delete:
+      tags: [admin-catalog]
+      summary: Requires permission `catalog:image:write`. Deletes the S3/MinIO object and the row.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: imageId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: deleted }
+        '403': { description: caller lacks catalog:image:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users:
+    get:
+      tags: [admin-rbac]
+      summary: List accounts — requires permission `account:manage_users`
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/UserProfile' }
+                  page: { $ref: '#/components/schemas/Page' }
+        '403': { description: caller lacks account:manage_users, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    post:
+      tags: [admin-rbac]
+      summary: >
+        REQ-2.6 (role assignment) — creates a STAFF/ORDER_MANAGER/MANAGER/ADMIN account. There is no
+        self-registration path for these roles (only `/auth/register` self-serves, and only ever as
+        CUSTOMER, REQ-2.1) — requires permission `account:manage_users`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAccountRequest' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/UserProfile' } } } }
+        '400': { description: validation failure, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: caller lacks account:manage_users, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: email already registered, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/roles:
+    get:
+      tags: [admin-rbac]
+      summary: Resolved OQ-1 (RBAC-1) — requires permission `account:manage_roles` (ADMIN bypasses this check unconditionally, 02_SECURITY_BASELINE.md §1)
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Role' }
+        '403': { description: caller lacks account:manage_roles, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/permissions:
+    get:
+      tags: [admin-rbac]
+      summary: The full permission catalog (07_SQL_DATABASE_STANDARDS.md §1a) — requires permission `account:manage_roles`
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Permission' }
+
+  /admin/roles/{roleId}/permissions:
+    put:
+      tags: [admin-rbac]
+      summary: >
+        Replaces the full set of permissions granted to a role. Requires permission
+        `account:manage_roles`. Attempting this against the ADMIN role is accepted (for display
+        consistency) but has no enforcement effect, since ADMIN bypasses the permission table by code
+        (02_SECURITY_BASELINE.md §1) — documented so this isn't mistaken for a way to weaken ADMIN.
+      parameters:
+        - name: roleId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RolePermissionsUpdateRequest' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Role' } } } }
+        '403': { description: caller lacks account:manage_roles, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '400': { description: an unknown permission code was supplied, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
