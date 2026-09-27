@@ -53,7 +53,6 @@ internals. See `06_ENGINEERING_STANDARDS.md` for how this maps to Go packages.
 | Module | Responsibility | Owns (tables, from the ER diagram) |
 |---|---|---|
 | `catalog` | Products, variants, categories, search, images | `product`, `product_variant`, `category`, `product_category`, `attribute_name`, `attribute_value`, `variant_attribute`, `product_image` |
-| `identity` | Registration, login, roles, sessions, **permission assignment** | `user_account`, `role`, `customer`, `staff_profile`, `permission`, `role_permission` |
 | `cart` | Cart lines and subtotals before checkout | `cart`, `cart_item` |
 | `ordering` | Checkout, order creation, order status | `order`, `order_item`, `order_status_history` |
 | `inventory` | Stock levels, adjustments, audit log | (stock lives on `product_variant.stock_quantity`), `stock_movement` |

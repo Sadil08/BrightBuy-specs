@@ -6,7 +6,6 @@ that satisfies each one, mapped to `08_THREAT_MODEL.md` T-IDs and OWASP Top Ten 
 
 ---
 
-## 1. Authorization model — dynamic, permission-based RBAC (resolved OQ-1, 2026-09-02)
 
 Phase 1 does **not** hardcode "what a role can do" in application code. Two schema objects
 (`07_SQL_DATABASE_STANDARDS.md` §1a) make it data instead:

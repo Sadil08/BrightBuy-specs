@@ -13,7 +13,6 @@ about HTTP, and nothing above `mysql` knows about SQL.
 
 ```
 [FE product list/detail pages] --GET--> [httpapi.CatalogHandler] --> [app.CatalogService] --> [mysql.ProductRepository / CategoryRepository] --> MySQL
-                                                                                                   (fn_is_variant_in_stock, §4 below)
 ```
 
 - `CatalogService` has no port dependencies beyond its own repositories in this feature (no payment,

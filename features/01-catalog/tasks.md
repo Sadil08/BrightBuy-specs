@@ -3,7 +3,6 @@
 **Feature slug:** `CATALOG` · **Status:** ❌ not started · **Companion:** [spec.md](spec.md) · [plan.md](plan.md)
 
 ---
-
 ## 1. Build order
 
 ### Database

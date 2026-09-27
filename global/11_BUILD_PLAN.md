@@ -11,7 +11,6 @@ real schema, rather than bolted on at the end.
 - Create the two repositories (`brightbuy-backend`, `brightbuy-frontend` — OQ-2, resolved). Both
   resolved: image strategy (OQ-3, real S3/MinIO pipeline) and role model (OQ-1, dynamic RBAC) — both
   now baked into `01_TECH_STACK.md`, `02_SECURITY_BASELINE.md`, `07_SQL_DATABASE_STANDARDS.md` §1a.
-- `go.mod` + minimal `cmd/api/main.go` that boots, connects to MySQL, exposes `/healthz`/`/readyz`.
 - `brightbuy-frontend/` Next.js app scaffold, boots, calls the health check.
 - Dockerfiles + per-repo `docker-compose.yml` (backend: MySQL + MinIO + api; frontend: web, joined to
   the backend's network) — full detail in `12_DEVOPS_CICD.md` §1.
