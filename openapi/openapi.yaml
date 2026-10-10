@@ -251,6 +251,12 @@ components:
           items: { $ref: '#/components/schemas/CartItem' }
         subtotal: { $ref: '#/components/schemas/Money' }
 
+    City:
+      type: object
+      properties:
+        cityId: { type: integer }
+        name: { type: string }
+
     DeliveryEstimateRequest:
       type: object
       required: [mode, items]
@@ -545,6 +551,23 @@ paths:
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
         '404': { description: not this customer's line item, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /cities:
+    get:
+      tags: [delivery]
+      summary: >
+        Public reference data for the checkout city picker (REQ-4.4 needs a destination city for
+        Standard Delivery, and the client has to choose from something). Alphabetical. The Main/Other
+        classification is deliberately not exposed — it only drives the day count, which
+        /delivery/estimate returns.
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/City' }
 
   /delivery/estimate:
     post:
