@@ -185,6 +185,7 @@ components:
         name: { type: string }
         priceFrom: { $ref: '#/components/schemas/Money' }
         stockStatus: { type: string, enum: [IN_STOCK, OUT_OF_STOCK] }
+        imageUrl: { type: string, description: 'The product preview image (the one staff chose, else the oldest). Absent when the product has no images.' }
 
     RegisterRequest:
       type: object
@@ -1033,6 +1034,24 @@ paths:
         '204': { description: deleted }
         '403': { description: caller lacks catalog:image:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '404': { description: not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /staff/products/{productId}/images/{imageId}/primary:
+    put:
+      tags: [admin-catalog]
+      summary: Requires permission `catalog:image:write`. Chooses this image as the product's preview on the home page and shop grid.
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: imageId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: preview image set }
+        '403': { description: caller lacks catalog:image:write, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: image not found on this product, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /admin/users:
     get:
